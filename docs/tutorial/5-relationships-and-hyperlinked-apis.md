@@ -104,11 +104,16 @@ If we're going to have a hyperlinked API, we need to make sure we name our URL p
 * Our user serializer includes a field that refers to `'snippet-detail'`.
 * Our snippet and user serializers include `'url'` fields that by default will refer to `'{model_name}-detail'`, which in this case will be `'snippet-detail'` and `'user-detail'`.
 
-After adding all those names into our URLconf, our final `snippets/urls.py` file should look like this:
+To support the hyperlinking features, the framework expects that URL patterns are configured under the `rest_framework` application namespace.  In addition to naming our URL patterns, we'll need to set the `app_name` accordingly.
+
+After updating our URLconf, our final `snippets/urls.py` file should look like this:
 
     from django.conf.urls import url, include
     from rest_framework.urlpatterns import format_suffix_patterns
     from snippets import views
+
+    # Framework namespace
+    app_name = 'rest_framework'
 
     # API endpoints
     urlpatterns = format_suffix_patterns([

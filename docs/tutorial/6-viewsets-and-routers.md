@@ -114,6 +114,8 @@ Here's our re-wired `snippets/urls.py` file.
     router.register(r'snippets', views.SnippetViewSet)
     router.register(r'users', views.UserViewSet)
 
+    app_name = 'rest_framework'
+
     # The API URLs are now determined automatically by the router.
     urlpatterns = [
         url(r'^', include(router.urls))

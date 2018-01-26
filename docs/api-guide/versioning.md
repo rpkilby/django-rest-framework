@@ -154,16 +154,19 @@ With this scheme the `request.version` attribute is determined based on the `nam
 In the following example we're giving a set of views two different possible URL prefixes, each under a different namespace:
 
     # bookings/urls.py
+    app_name = 'rest_framework'
     urlpatterns = [
         url(r'^$', bookings_list, name='bookings-list'),
         url(r'^(?P<pk>[0-9]+)/$', bookings_detail, name='bookings-detail')
     ]
 
-    # urls.py
+    # urls.py (root urlconf)
     urlpatterns = [
         url(r'^v1/bookings/', include('bookings.urls', namespace='v1')),
         url(r'^v2/bookings/', include('bookings.urls', namespace='v2'))
     ]
+
+Note that in Django 2.0, patterns that specify an instance namespace must also provide an application namespace. It is recommended that you use the `rest_framework` `app_name`.
 
 Both `URLPathVersioning` and `NamespaceVersioning` are reasonable if you just need a simple versioning scheme. The `URLPathVersioning` approach might be better suitable for small ad-hoc projects, and the `NamespaceVersioning` is probably easier to manage for larger projects.
 

@@ -122,7 +122,7 @@ Okay, now let's wire up the API URLs.  On to `tutorial/urls.py`...
     # Wire up our API using automatic URL routing.
     # Additionally, we include login URLs for the browsable API.
     urlpatterns = [
-        url(r'^', include(router.urls)),
+        url(r'^', include(router.urlpatterns)),
         url(r'^api-auth/', include('rest_framework.urls', namespace='rest_framework'))
     ]
 
