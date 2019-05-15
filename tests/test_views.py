@@ -1,12 +1,15 @@
 import copy
 
 from django.test import TestCase
+from django.urls import path
+from django.views import generic
 
 from rest_framework import status
 from rest_framework.decorators import api_view
+from rest_framework.exceptions import APIException
 from rest_framework.response import Response
 from rest_framework.settings import APISettings, api_settings
-from rest_framework.test import APIRequestFactory
+from rest_framework.test import APIRequestFactory, URLPatternsTestCase, override_settings
 from rest_framework.views import APIView
 
 factory = APIRequestFactory()
@@ -94,6 +97,54 @@ class FunctionBasedViewIntegrationTests(TestCase):
         }
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert sanitise_json_error(response.data) == expected
+
+
+# Disable exception propagation since it preempts request logging
+@override_settings(DEBUG_PROPAGATE_EXCEPTIONS=False)
+class TestExceptionLogging(URLPatternsTestCase, TestCase):
+
+    class DjangoExceptionView(generic.View):
+        def get(self, request, *args, **kwargs):
+            raise APIException('django exception')
+
+    class DRFExceptionView(APIView):
+        def get(self, request, *args, **kwargs):
+            raise APIException('drf exception')
+
+    urlpatterns = [
+        path('django', DjangoExceptionView.as_view()),
+        path('drf', DRFExceptionView.as_view()),
+    ]
+
+    def test_django_exception_logging(self):
+        with self.assertLogs('django.request', 'ERROR') as cm:
+            # Django's test client raises sys.exc_info, even though the WSGI
+            # handler has caught and returned an appropriate error response.
+            with self.assertRaisesMessage(APIException, 'django exception'):
+                self.client.get('/django')
+
+            assert len(cm.records) == 1
+            record = cm.records[0]
+
+        assert record.getMessage() == 'Internal Server Error: /django'
+        assert record.exc_info is not None
+        assert record.exc_info[0] is APIException
+        assert str(record.exc_info[1]) == 'django exception'
+
+    def test_drf_exception_logging(self):
+        with self.assertLogs('django.request', 'ERROR') as cm:
+            # DRF handles exceptions internally in the view layer, preempting
+            # the WSGI handler's uncaught exception handling and in turn,
+            # preventing the test client from reraising the exception.
+            self.client.get('/drf')
+
+            assert len(cm.records) == 1
+            record = cm.records[0]
+
+        assert record.getMessage() == 'Internal Server Error: /drf'
+        assert record.exc_info is not None
+        assert record.exc_info[0] is APIException
+        assert str(record.exc_info[1]) == 'drf exception'
 
 
 class TestCustomExceptionHandler(TestCase):
