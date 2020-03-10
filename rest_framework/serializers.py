@@ -317,7 +317,11 @@ class SerializerMetaclass(type):
 
     def __new__(cls, name, bases, attrs):
         attrs['_declared_fields'] = cls._get_declared_fields(bases, attrs)
-        return super().__new__(cls, name, bases, attrs)
+
+        new_class = super().__new__(cls, name, bases, attrs)
+        new_class.base_fields = new_class.get_base_fields()
+
+        return new_class
 
 
 def as_serializer_error(exc):
@@ -383,7 +387,15 @@ class Serializer(BaseSerializer, metaclass=SerializerMetaclass):
         # Every new serializer is created with a clone of the field instances.
         # This allows users to dynamically modify the fields on a serializer
         # instance without affecting every other serializer instance.
-        return copy.deepcopy(self._declared_fields)
+        return copy.deepcopy(self.base_fields)
+
+    @classmethod
+    def get_base_fields(self):
+        """
+        Returns a dictionary of {field_name: field_instance}.
+        """
+        # Return a copy so base_fields doesn't point to the same object.
+        return self._declared_fields.copy()
 
     def get_validators(self):
         """
@@ -851,95 +863,7 @@ def raise_errors_on_nested_writes(method_name, serializer, validated_data):
     )
 
 
-class ModelSerializerMetaclass(SerializerMetaclass):
-    """
-    This metaclass sets a dictionary named `base_fields` on the class.
-
-    `base_fields` include the declared fields (see SerializerMetaclass),
-    and fields generated for the model. A deepcopy of `base_fields` is
-    used for each instance of the ModelSerializer.
-    """
-
-    @classmethod
-    def _get_fields(cls, new_class):
-        # ModelSerializer itself and customized subclasses like
-        # HyperlinkedModelSerializer are never instantiated directly,
-        # and don't have a Meta. For these, the base_fields is None,
-        # and an error is raised if it's attempted to be used.
-        if not hasattr(new_class, 'Meta'):
-            return None
-
-        assert hasattr(new_class.Meta, 'model'), (
-            'Class {serializer_class} missing "Meta.model" attribute'.format(
-                serializer_class=new_class.__name__
-            )
-        )
-        if model_meta.is_abstract_model(new_class.Meta.model):
-            raise ValueError(
-                'Cannot use ModelSerializer with Abstract Models.'
-            )
-
-        if new_class.url_field_name is None:
-            new_class.url_field_name = api_settings.URL_FIELD_NAME
-
-        declared_fields = new_class._declared_fields
-        model = getattr(new_class.Meta, 'model')
-        depth = getattr(new_class.Meta, 'depth', 0)
-
-        if depth is not None:
-            assert depth >= 0, "'depth' may not be negative."
-            assert depth <= 10, "'depth' may not be greater than 10."
-
-        # Retrieve metadata about fields & relationships on the model class.
-        info = model_meta.get_field_info(model)
-        field_names = new_class.get_field_names(declared_fields, info)
-
-        # Determine any extra field arguments and hidden fields that
-        # should be included
-        extra_kwargs = new_class.get_extra_kwargs()
-        extra_kwargs, hidden_fields = new_class.get_uniqueness_extra_kwargs(
-            field_names, declared_fields, extra_kwargs
-        )
-
-        # Determine the fields that should be included on the serializer.
-        fields = OrderedDict()
-
-        for field_name in field_names:
-            # If the field is explicitly declared on the class then use that.
-            if field_name in declared_fields:
-                fields[field_name] = declared_fields[field_name]
-                continue
-
-            extra_field_kwargs = extra_kwargs.get(field_name, {})
-            source = extra_field_kwargs.get('source', '*')
-            if source == '*':
-                source = field_name
-
-            # Determine the serializer field class and keyword arguments.
-            field_class, field_kwargs = new_class.build_field(
-                source, info, model, depth
-            )
-
-            # Include any kwargs defined in `Meta.extra_kwargs`
-            field_kwargs = new_class.include_extra_kwargs(
-                field_kwargs, extra_field_kwargs
-            )
-
-            # Create the serializer field.
-            fields[field_name] = field_class(**field_kwargs)
-
-        # Add in any hidden fields.
-        fields.update(hidden_fields)
-
-        return fields
-
-    def __new__(cls, name, bases, attrs):
-        new_class = super().__new__(cls, name, bases, attrs)
-        new_class.base_fields = cls._get_fields(new_class)
-        return new_class
-
-
-class ModelSerializer(Serializer, metaclass=ModelSerializerMetaclass):
+class ModelSerializer(Serializer):
     """
     A `ModelSerializer` is just a regular `Serializer`, except that:
 
@@ -996,6 +920,19 @@ class ModelSerializer(Serializer, metaclass=ModelSerializerMetaclass):
     # views, to correctly handle the 'Location' response header for
     # "HTTP 201 Created" responses.
     url_field_name = None
+
+    def get_fields(self):
+        """
+        Return the dict of field names -> field instances that should be
+        used for `self.fields` when instantiating the serializer.
+        """
+        assert hasattr(self, 'Meta'), (
+            'Class {serializer_class} missing "Meta" attribute'.format(
+                serializer_class=self.__class__.__name__
+            )
+        )
+
+        return copy.deepcopy(self.base_fields)
 
     # Default `create` and `update` behavior...
     def create(self, validated_data):
@@ -1090,17 +1027,82 @@ class ModelSerializer(Serializer, metaclass=ModelSerializerMetaclass):
 
     # Determine the fields to apply...
 
-    def get_fields(self):
+    @classmethod
+    def get_base_fields(cls):
         """
         Return the dict of field names -> field instances that should be
         used for `self.fields` when instantiating the serializer.
         """
-        assert self.base_fields is not None, (
-            'Class {serializer_class} missing "Meta" attribute'.format(
-                serializer_class=self.__class__.__name__
+        if cls.url_field_name is None:
+            cls.url_field_name = api_settings.URL_FIELD_NAME
+
+        # ModelSerializer and some subclasses (e.g., HyperlinkedModelSerializer)
+        # are not intended to be instantiated directly, as they serve as base
+        # classes. Because of this, they lack a Meta class and should not
+        # attempt to generate base fields.
+        if not hasattr(cls, 'Meta'):
+            return None
+
+        assert hasattr(cls.Meta, 'model'), (
+            'Class {serializer_class} missing "Meta.model" attribute'.format(
+                serializer_class=cls.__name__
             )
         )
-        return copy.deepcopy(self.base_fields)
+        if model_meta.is_abstract_model(cls.Meta.model):
+            raise ValueError(
+                'Cannot use ModelSerializer with Abstract Models.'
+            )
+
+        declared_fields = cls._declared_fields
+        model = getattr(cls.Meta, 'model')
+        depth = getattr(cls.Meta, 'depth', 0)
+
+        if depth is not None:
+            assert depth >= 0, "'depth' may not be negative."
+            assert depth <= 10, "'depth' may not be greater than 10."
+
+        # Retrieve metadata about fields & relationships on the model class.
+        info = model_meta.get_field_info(model)
+        field_names = cls.get_field_names(declared_fields, info)
+
+        # Determine any extra field arguments and hidden fields that
+        # should be included
+        extra_kwargs = cls.get_extra_kwargs()
+        extra_kwargs, hidden_fields = cls.get_uniqueness_extra_kwargs(
+            field_names, declared_fields, extra_kwargs
+        )
+
+        # Determine the fields that should be included on the serializer.
+        fields = OrderedDict()
+
+        for field_name in field_names:
+            # If the field is explicitly declared on the class then use that.
+            if field_name in declared_fields:
+                fields[field_name] = declared_fields[field_name]
+                continue
+
+            extra_field_kwargs = extra_kwargs.get(field_name, {})
+            source = extra_field_kwargs.get('source', '*')
+            if source == '*':
+                source = field_name
+
+            # Determine the serializer field class and keyword arguments.
+            field_class, field_kwargs = cls.build_field(
+                source, info, model, depth
+            )
+
+            # Include any kwargs defined in `Meta.extra_kwargs`
+            field_kwargs = cls.include_extra_kwargs(
+                field_kwargs, extra_field_kwargs
+            )
+
+            # Create the serializer field.
+            fields[field_name] = field_class(**field_kwargs)
+
+        # Add in any hidden fields.
+        fields.update(hidden_fields)
+
+        return fields
 
     # Methods for determining the set of field names to include...
 
