@@ -154,6 +154,12 @@ Optional.  If supplied, this argument will be a dictionary containing any additi
 
 By default this will include the following keys: `view`, `request`, `args`, `kwargs`.
 
+---
+
+**Note:** When your custom parser is invoked by the request object, you may see `AttributeError`s re-raised as `WrappedAttributeError`. This is necessary to prevent the original exception from being suppressed by the outer property access. These errors should be fixed or otherwise handled by your parser.
+
+---
+
 ## Example
 
 The following is an example plaintext parser that will populate the `request.data` property with a string representing the body of the request.

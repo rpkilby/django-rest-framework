@@ -16,6 +16,7 @@ from django.test import TestCase, override_settings
 
 from rest_framework import status
 from rest_framework.authentication import SessionAuthentication
+from rest_framework.negotiation import BaseContentNegotiation
 from rest_framework.parsers import BaseParser, FormParser, MultiPartParser
 from rest_framework.request import Request, WrappedAttributeError
 from rest_framework.response import Response
@@ -48,6 +49,19 @@ class PlainTextParser(BaseParser):
         `files` will always be `None`.
         """
         return stream.read()
+
+
+class AttributeErrorParser(BaseParser):
+    media_type = 'text/plain'
+
+    def parse(self, stream, media_type=None, parser_context=None):
+        raise AttributeError('parser')
+
+
+class AttributeErrorNegotiation(BaseContentNegotiation):
+
+    def select_parser(self, request, parsers):
+        raise AttributeError('negotiator')
 
 
 class TestContentParsing(TestCase):
@@ -332,3 +346,23 @@ class TestHttpRequest(TestCase):
         # ensure that request stream was consumed by form parser
         assert request.content_type.startswith('multipart/form-data')
         assert response.data == {'a': ['b']}
+
+    def test_parsing_attribute_error(self):
+        """
+        Ensure user-defined parsers can raise `AttributeError`s.
+        """
+        request = Request(factory.post('/', b'qwerty', content_type='text/plain'))
+        request.parsers = (AttributeErrorParser(), )
+
+        with pytest.raises(WrappedAttributeError, match='parser'):
+            request.data
+
+    def test_content_negotiation_attribute_error(self):
+        """
+        Ensure user-defined content negotiators can raise `AttributeError`s.
+        """
+        request = Request(factory.post('/', b'qwerty', content_type='text/plain'))
+        request.negotiator = AttributeErrorNegotiation()
+
+        with pytest.raises(AttributeError, match='negotiator'):
+            request.data

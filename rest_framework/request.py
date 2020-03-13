@@ -344,7 +344,8 @@ class Request:
             raise exceptions.UnsupportedMediaType(media_type)
 
         try:
-            parsed = parser.parse(stream, media_type, self.parser_context)
+            with wrap_attributeerrors():
+                parsed = parser.parse(stream, media_type, self.parser_context)
         except Exception:
             # If we get an exception during parsing, fill in empty data and
             # re-raise.  Ensures we don't simply repeat the error when
